@@ -1,0 +1,950 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create a ELB and Backend EC2 in 3 private subnets
+Parameters:
+
+  Project:
+    Description: Enter Project Name.
+    Type: String
+    Default: Autoscaling Baked AMI RDS Backed Webapp Stack Creation
+  Ec2KeyPair:
+    Description: Select Keypair to Assign to EC2 Instances
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: 'ssh'
+  MinAutoScaleCount:
+    Description: Enter Minimum Instance Auto Scale Count.
+    Type: Number
+    Default: '1'
+  MaxAutoScaleCount:
+    Description: Enter Maximum Instance Auto Scale Count.
+    Type: Number
+    Default: '1'
+  VPC:
+    Description: Select VPC.
+    Type: AWS::EC2::VPC::Id
+  PublicSubnet1:
+    Description: Public Subnet 1 to Deploy ELB to.
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet2:
+    Description: Public Subnet 2 to Deploy ELB to.
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet3:
+    Description: Public Subnet 3 to Deploy ELB to.
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet1:
+    Description: Private Subnet 1 to Deploy Webapp Autoscaling Group to.
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2:
+    Description: Private Subnet 2 to Deploy Webapp Autoscaling Group to.
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet3:
+    Description: Private Subnet 3 to Deploy Webapp Autoscaling Group to.
+    Type: AWS::EC2::Subnet::Id
+  InternalAccessSecurityGroup:
+    Description: Security Group That Allows Bastion Host Access to Instances.
+    Type: AWS::EC2::SecurityGroup::Id
+  RemoteSecurityGroup:
+    Description: Remote Network or IP that can Access the instances of VPN or Direct Connect.
+    Type: AWS::EC2::SecurityGroup::Id
+  RDSAccessSecurityGroup:
+    Description: Security Group That Instance Access to RDS Instances.
+    Type: AWS::EC2::SecurityGroup::Id
+  PublicNetworkAcl:
+    Description: Enter Public Network ACL ID.
+    Type: String
+  ElbHttpListeningPort:
+    Description: Enter HTTP Listening Port for ELB.
+    Type: String
+    Default: '80'
+    MinLength: '2'
+    MaxLength: '5'
+    AllowedPattern: "(\\d{2,5})"
+  ElbHttpsListeningPort:
+    Description: "(Skip if Not Using SSL) Enter HTTPS Listening Port for ELB."
+    Type: String
+    Default: '443'
+    MinLength: '2'
+    MaxLength: '5'
+    AllowedPattern: "(\\d{2,5})"
+  InstanceHttpListeningPort:
+    Description: Enter HTTP Listening Port for Instance.
+    Type: String
+    Default: '80'
+    MinLength: '2'
+    MaxLength: '5'
+    AllowedPattern: "(\\d{2,5})"
+  ElbStickySessions:
+    Description: Enabled Sticky Sessions on ELB?
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  CookieExpirationPeriod:
+    Description: "(Skip if Not Using Sticky Sessions) Enter ELB Sticky Session Cookie
+      Timeout in seconds."
+    Type: Number
+    Default: '43200'
+  UseSsl:
+    Description: Use SSL/TLS?
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  ListenOnBothPorts:
+    Description: "(Skip if Not Using SSL) Listen on Both HTTP and HTTPS on the ELB?"
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  SetupElbLogging:
+    Description: Select whether or not to setup S3 Bucket for ELB Logging.
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  AMI:
+    Description: Enter Baked AMI ID.
+    Type: String
+    Default: ami-a4c7edb2
+  InstanceType:
+    Description: Select Instance Type.
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+    - t2.nano
+    - t2.micro
+    - t2.small
+    - t2.medium
+    - t2.large
+    - m1.small
+    - m1.medium
+    - m1.large
+    - m1.xlarge
+    - m2.xlarge
+    - m2.2xlarge
+    - m2.4xlarge
+    - m3.medium
+    - m3.large
+    - m3.xlarge
+    - m3.2xlarge
+    - m4.large
+    - m4.xlarge
+    - m4.2xlarge
+    - m4.4xlarge
+    - m4.10xlarge
+    - c1.medium
+    - c1.xlarge
+    - c3.large
+    - c3.xlarge
+    - c3.2xlarge
+    - c3.4xlarge
+    - c3.8xlarge
+    - c4.large
+    - c4.xlarge
+    - c4.2xlarge
+    - c4.4xlarge
+    - c4.8xlarge
+    - g2.2xlarge
+    - g2.8xlarge
+    - r3.large
+    - r3.xlarge
+    - r3.2xlarge
+    - r3.4xlarge
+    - r3.8xlarge
+    - i2.xlarge
+    - i2.2xlarge
+    - i2.4xlarge
+    - i2.8xlarge
+    - d2.xlarge
+    - d2.2xlarge
+    - d2.4xlarge
+    - d2.8xlarge
+    - hi1.4xlarge
+    - hs1.8xlarge
+    - cr1.8xlarge
+    - cc2.8xlarge
+    - cg1.4xlarge
+    ConstraintDescription: Must be a valid EC2 instance type.
+  OsType:
+    Description: Select OS Type of the AMI.
+    Type: String
+    Default: amazon
+    AllowedValues:
+    - amazon
+    - centos6
+    - centos7
+    - rhel6
+    - rhel7
+    - ubuntu
+    - windows
+  AllowHttpToElbRuleNumber:
+    Description: Enter Public Network ACL Rule Number to Allow HTTP From Internet to ELB.
+    Type: Number
+    Default: '300'
+  AllowHttpsToElbRuleNumber:
+    Description: Enter Public Network ACL Rule Number to Allow HTTPS From Internet to ELB. (Skip if Not Using SSL)
+    Type: Number
+    Default: '305'
+Mappings:
+  bootstrap:
+    amazon:
+      warmebs: 'echo ''ACTION: Performing EBS Warming'' && dd if=/dev/xvda of=/dev/xvda
+        conv=notrunc bs=1M status=progress'
+      patch: 'echo ''ACTION: Patching'' && yum update -y --exclude=kernel*'
+      installpackages: 'echo ''ACTION: Installing Software Packages'' && yum -y remove java-1.7.0-openjdk && yum install
+        -y curl wget mlocate ca-certificates openssl vim sudo git nodejs java-1.8.0-openjdk'
+    centos6:
+      warmebs: 'echo ''ACTION: Performing EBS Warming'' && dd if=/dev/xvda of=/dev/xvda
+        conv=notrunc bs=1M'
+      patch: 'echo ''ACTION: Patching'' && yum update -y --exclude=kernel*'
+      installpackages: 'echo ''ACTION: Installing Software Packages'' && yum install
+        -y curl wget mlocate ca-certificates openssl vim sudo git nodejs java-1.8.0-openjdk'
+    centos7:
+      warmebs: 'echo ''ACTION: Performing EBS Warming'' && dd if=/dev/xvda of=/dev/xvda
+        conv=notrunc bs=1M status=progress'
+      patch: 'echo ''ACTION: Patching'' && yum update -y --exclude=kernel*'
+      installpackages: 'echo ''ACTION: Installing Software Packages'' && yum install
+        -y curl wget mlocate ca-certificates openssl vim sudo git nodejs java-1.8.0-openjdk'
+    rhel6:
+      warmebs: 'echo ''ACTION: Performing EBS Warming'' && dd if=/dev/xvda of=/dev/xvda
+        conv=notrunc bs=1M'
+      patch: 'echo ''ACTION: Patching'' && yum update -y --exclude=kernel*'
+      installpackages: 'echo ''ACTION: Installing Software Packages'' && yum install
+        -y curl wget mlocate ca-certificates openssl vim sudo git nodejs java-1.8.0-openjdk'
+    rhel7:
+      warmebs: 'echo ''ACTION: Performing EBS Warming'' && dd if=/dev/xvda of=/dev/xvda
+        conv=notrunc bs=1M status=progress'
+      patch: 'echo ''ACTION: Patching'' && yum update -y --exclude=kernel*'
+      installpackages: 'echo ''ACTION: Installing Software Packages'' && yum install
+        -y curl wget mlocate ca-certificates openssl vim sudo git nodejs java-1.8.0-openjdk'
+    ubuntu:
+      warmebs: 'echo ''ACTION: Performing EBS Warming'' && dd if=/dev/xvda of=/dev/xvda
+        conv=notrunc bs=1M status=progress'
+      patch: 'echo ''ACTION: Patching'' && apt-mark hold linux-image-generic linux-headers-generic
+        && apt-get update && sleep 1 && apt-get upgrade -y && apt-mark unhold linux-image-generic
+        linux-headers-generic'
+      installpackages: 'echo ''ACTION: Installing Software Packages'' && apt-get update
+        && sleep 1 && apt-get install -y curl wget vim ca-certificates openssl htop git nodejs java-1.8.0-openjdk'
+    windows:
+      warmebs: 'echo ''ACTION: Performing EBS Warming'''
+      patch: 'echo ''ACTION: Patching'''
+      installpackages: 'echo ''ACTION: Installing Software Packages'''
+      deploy: 'aws s3 cp s3://${AWS::StackName}-deploy . --recursive ./run.sh'
+Conditions:
+  ConfigureStickiness:
+    Fn::Equals:
+    - Ref: ElbStickySessions
+    - 'true'
+  EnableSsl:
+    Fn::Equals:
+    - Ref: UseSsl
+    - 'true'
+  DisableSsl:
+    Fn::Equals:
+    - Ref: UseSsl
+    - 'false'
+  DisableSslOrUseBothPorts:
+    Fn::Or:
+    - Fn::Equals:
+      - Ref: UseSsl
+      - 'false'
+    - Fn::Equals:
+      - Ref: ListenOnBothPorts
+      - 'true'
+  UseBothPorts:
+    Fn::Equals:
+    - Ref: ListenOnBothPorts
+    - 'true'
+  ConfigureElbLogging:
+    Fn::Equals:
+    - Ref: SetupElbLogging
+    - 'true'
+Resources:
+
+  IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+
+  IamPolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName:
+        Fn::Join:
+        - ''
+        - - Ref: AWS::StackName
+          - "-instance-policy"
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:*
+          - ec2:Describe*
+          - elasticloadbalancing:Describe*
+          - autoscaling:Describe*
+          - cloudwatch:*
+          - logs:*
+          - sns:*
+          Resource: "*"
+      Roles:
+      - Ref: IamRole
+
+  IamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - Ref: IamRole
+
+  InternetToElbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web to ELB Access
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Join [ "", [ !Ref "AWS::StackName", "-internet-to-elb" ] ]
+      - Key: Project
+        Value:
+          Ref: Project
+      SecurityGroupIngress:
+        Fn::If:
+        - DisableSsl
+        - - IpProtocol: tcp
+            FromPort:
+              Ref: ElbHttpListeningPort
+            ToPort:
+              Ref: ElbHttpListeningPort
+            CidrIp: 0.0.0.0/0
+        - Fn::If:
+          - EnableSsl
+          - - IpProtocol: tcp
+              FromPort:
+                Ref: ElbHttpsListeningPort
+              ToPort:
+                Ref: ElbHttpsListeningPort
+              CidrIp: 0.0.0.0/0
+          - Fn::If:
+            - UseBothPorts
+            - - IpProtocol: tcp
+                FromPort:
+                  Ref: ElbHttpListeningPort
+                ToPort:
+                  Ref: ElbHttpListeningPort
+                CidrIp: 0.0.0.0/0
+              - IpProtocol: tcp
+                FromPort:
+                  Ref: ElbHttpsListeningPort
+                ToPort:
+                  Ref: ElbHttpsListeningPort
+                CidrIp: 0.0.0.0/0
+            - - IpProtocol: tcp
+                FromPort:
+                  Ref: ElbHttpListeningPort
+                ToPort:
+                  Ref: ElbHttpListeningPort
+                CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        CidrIp: 0.0.0.0/0
+        
+  InstanceToElbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ELB to Instance Access in VPC
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Join [ "", [ !Ref "AWS::StackName", "-elb-to-instance" ] ]
+      - Key: Project
+        Value:
+          Ref: Project
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort:
+          Ref: InstanceHttpListeningPort
+        ToPort:
+          Ref: InstanceHttpListeningPort
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        CidrIp: 0.0.0.0/0
+        
+  ElasticLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    DependsOn:
+    - InstanceToElbSecurityGroup
+    - InternetToElbSecurityGroup
+    Properties:
+      LBCookieStickinessPolicy:
+        Fn::If:
+        - ConfigureStickiness
+        - - CookieExpirationPeriod:
+              Ref: CookieExpirationPeriod
+            PolicyName: !Join [ "", [ !Ref "AWS::StackName", "-elbcookie" ] ]
+        - Ref: AWS::NoValue
+      Subnets:
+      - Ref: PublicSubnet1
+      - Ref: PublicSubnet2
+      - Ref: PublicSubnet3
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 120
+      ConnectionSettings:
+        IdleTimeout: 90
+      CrossZone: 'true'
+      SecurityGroups:
+      - Ref: InstanceToElbSecurityGroup
+      - Ref: InternetToElbSecurityGroup
+      Listeners:
+        Fn::If:
+        - DisableSsl
+        - - LoadBalancerPort:
+              Ref: ElbHttpListeningPort
+            InstancePort:
+              Ref: InstanceHttpListeningPort
+            Protocol: HTTP
+        - Fn::If:
+          - UseBothPorts
+          - - LoadBalancerPort:
+                Ref: ElbHttpListeningPort
+              InstancePort:
+                Ref: InstanceHttpListeningPort
+              Protocol: HTTP
+              LoadBalancerPort:
+                Ref: ElbHttpsListeningPort
+              InstancePort:
+                Ref: InstanceHttpListeningPort
+              Protocol: HTTPS
+              PolicyNames:
+              - Fn::Join:
+                - ''
+                - - Ref: AWS::StackName
+                  - "-elbcookie"
+          - Fn::If:
+            - EnableSsl
+            - - LoadBalancerPort:
+                  Ref: ElbHttpsListeningPort
+                InstancePort:
+                  Ref: InstanceHttpListeningPort
+                Protocol: HTTPS
+                PolicyNames:
+                - Fn::Join:
+                  - ''
+                  - - Ref: AWS::StackName
+                    - "-elbcookie"
+            - - LoadBalancerPort:
+                  Ref: ElbHttpListeningPort
+                InstancePort:
+                  Ref: InstanceHttpListeningPort
+                Protocol: HTTP
+      LoadBalancerName:
+        Ref: AWS::StackName
+      HealthCheck:
+        Target:
+          Fn::Join:
+          - ''
+          - - 'TCP:'
+            - Ref: InstanceHttpListeningPort
+        HealthyThreshold: '3'
+        UnhealthyThreshold: '5'
+        Interval: '30'
+        Timeout: '5'
+      AccessLoggingPolicy:
+        Fn::If:
+        - ConfigureElbLogging
+        - S3BucketName:
+            Ref: S3LoggingBucket
+          S3BucketPrefix: Logs
+          Enabled: 'true'
+          EmitInterval: '60'
+        - Ref: AWS::NoValue
+      Tags:
+      - Key: Name
+        Value:
+          Ref: AWS::StackName
+      - Key: Project
+        Value:
+          Ref: Project
+  
+  InboundPublicNetworkAclEntryHttpToElb:
+    Condition: DisableSslOrUseBothPorts
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Ref: PublicNetworkAcl
+      RuleNumber:
+        Ref: AllowHttpToElbRuleNumber
+      Protocol: '6'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From:
+          Ref: ElbHttpListeningPort
+        To:
+          Ref: ElbHttpListeningPort
+
+  InboundPublicNetworkAclEntryHttpsToElb:
+    Condition: EnableSsl
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Ref: PublicNetworkAcl
+      RuleNumber:
+        Ref: AllowHttpsToElbRuleNumber
+      Protocol: '6'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From:
+          Ref: ElbHttpsListeningPort
+        To:
+          Ref: ElbHttpsListeningPort
+
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn:
+    - InstanceToElbSecurityGroup
+    - IamInstanceProfile
+    Properties:
+      AssociatePublicIpAddress: 'false'
+      IamInstanceProfile:
+        Ref: IamInstanceProfile
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroups:
+      - Ref: InstanceToElbSecurityGroup
+      - Ref: RDSAccessSecurityGroup
+      - Ref: InternalAccessSecurityGroup
+      - Ref: RemoteSecurityGroup
+      ImageId:
+        Ref: AMI
+      KeyName:
+        Ref: Ec2KeyPair
+      UserData:
+        Fn::Base64:
+          Fn::Join:
+          - ''
+          - - |
+              #!/bin/bash
+            - Fn::FindInMap:
+              - bootstrap
+              - Ref: OsType
+              - warmebs
+            - |2+
+
+            - Fn::FindInMap:
+              - bootstrap
+              - Ref: OsType
+              - patch
+            - |2+
+
+            - Fn::FindInMap:
+              - bootstrap
+              - Ref: OsType
+              - installpackages
+            - |2+
+            # aws s3 cp s3://${AWS::StackName}-deploy . --recursive && ./run.sh"
+            - !Join [ "", [ "\n", "echo 'ACTION: Running' && cd /home/ec2-user && aws s3 cp s3://", !Ref "AWS::StackName", "-deploy . --recursive && sudo chmod -R 777 * && sudo ./run.sh > run.log &" ] ]
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+    - LaunchConfiguration
+    - ElasticLoadBalancer
+    Properties:
+      LaunchConfigurationName:
+        Ref: LaunchConfiguration
+      MinSize:
+        Ref: MinAutoScaleCount
+      MaxSize:
+        Ref: MaxAutoScaleCount
+      DesiredCapacity:
+        Ref: MinAutoScaleCount
+      HealthCheckType: EC2
+      LoadBalancerNames:
+      - Ref: ElasticLoadBalancer
+      MetricsCollection:
+      - Granularity: 1Minute
+        Metrics:
+        - GroupMinSize
+        - GroupMaxSize
+      VPCZoneIdentifier:
+      - Ref: PrivateSubnet1
+      - Ref: PrivateSubnet2
+      - Ref: PrivateSubnet3
+      Tags:
+      - Key: Name
+        Value:
+          Ref: AWS::StackName
+        PropagateAtLaunch: 'true'
+      - Key: Project
+        Value:
+          Ref: Project
+        PropagateAtLaunch: 'true'
+
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn:
+    - AutoScalingGroup
+    - ScaleUpPolicy
+    Properties:
+      AlarmDescription: Scale-up if CPU > 60% for 10 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: '300'
+      EvaluationPeriods: '2'
+      Threshold: '60'
+      AlarmActions:
+      - Ref: ScaleUpPolicy
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value:
+          Ref: AutoScalingGroup
+      ComparisonOperator: GreaterThanThreshold
+
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn:
+    - AutoScalingGroup
+    - ScaleDownPolicy
+    Properties:
+      AlarmDescription: Scale-down if CPU < 30% for 10 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: '300'
+      EvaluationPeriods: '2'
+      Threshold: '30'
+      AlarmActions:
+      - Ref: ScaleDownPolicy
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value:
+          Ref: AutoScalingGroup
+      ComparisonOperator: LessThanThreshold
+
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    DependsOn:
+    - AutoScalingGroup
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: AutoScalingGroup
+      Cooldown: 300
+      ScalingAdjustment: '1'
+
+  ScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    DependsOn:
+    - AutoScalingGroup
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: AutoScalingGroup
+      Cooldown: 1800
+      ScalingAdjustment: "-1"
+
+  S3DeployBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join [ "", [ !Ref "AWS::StackName", "-deploy" ] ]
+      Tags:
+      - Key: Name
+        Value: !Join [ "", [ !Ref "AWS::StackName", "-deploy" ] ]
+      - Key: Project
+        Value:
+          Ref: Project
+      
+  S3LoggingBucket:
+    Condition: ConfigureElbLogging
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Join [ "", [ !Ref "AWS::StackName", "-logs" ] ]
+      - Key: Project
+        Value:
+          Ref: Project
+
+  S3LoggingBucketPolicy:
+    Condition: ConfigureElbLogging
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: S3LoggingBucket
+      PolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+        - Sid: ELBAccessLogs20130930
+          Effect: Allow
+          Resource:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: S3LoggingBucket
+              - "/"
+              - Logs
+              - "/AWSLogs/"
+              - Ref: AWS::AccountId
+              - "/*"
+          Principal: "*"
+          Action:
+          - s3:PutObject
+
+Outputs:
+  Project:
+    Description: The project name.
+    Value:
+      Ref: Project
+  MinAutoScaleCount:
+    Description: Minimum Instance Count.
+    Value:
+      Ref: MinAutoScaleCount
+  MaxAutoScaleCount:
+    Description: Maximum Instance Count.
+    Value:
+      Ref: MaxAutoScaleCount
+  AMI:
+    Description: AMI Used.
+    Value:
+      Ref: AMI
+  OsType:
+    Description: OS Type Selected.
+    Value:
+      Ref: OsType
+  InstanceType:
+    Description: Instance Type Used.
+    Value:
+      Ref: InstanceType
+  KeyPairLoaded:
+    Description: Key Pair Used.
+    Value:
+      Ref: Ec2KeyPair
+  InstanceHttpListeningPort:
+    Description: Instance HTTP Listening Port.
+    Value:
+      Ref: InstanceHttpListeningPort
+  InternalAccessSecurityGroup:
+    Description: Instance to Instance Access Security Group Selected.
+    Value:
+      Ref: InternalAccessSecurityGroup
+  RemoteSecurityGroup:
+    Description: Remote to Instance Access Security Group Selected.
+    Value:
+      Ref: RemoteSecurityGroup
+  RDSAccessSecurityGroup:
+    Description: RDS to Instance Access Security Group Selected.
+    Value:
+      Ref: RDSAccessSecurityGroup
+  IAMRole:
+    Description: IAM Instance Profile Role Created.
+    Value:
+      Ref: IamRole
+  VPC:
+    Description: VPC Used.
+    Value:
+      Ref: VPC
+  PublicSubnets:
+    Description: Public Subnets ELB Deployed to.
+    Value:
+      Fn::Join:
+      - ''
+      - - 'AZ1: '
+        - Ref: PublicSubnet1
+        - ", "
+        - 'AZ2: '
+        - Ref: PublicSubnet2
+        - ", "
+        - 'AZ3: '
+        - Ref: PublicSubnet3
+  PrivateSubnets:
+    Description: Private Subnets Webapp ASG Deployed to.
+    Value:
+      Fn::Join:
+      - ''
+      - - 'AZ1: '
+        - Ref: PrivateSubnet1
+        - ", "
+        - 'AZ2: '
+        - Ref: PrivateSubnet2
+        - ", "
+        - 'AZ3: '
+        - Ref: PrivateSubnet3
+  PublicNetworkAcl:
+    Description: Public Network ACL Used.
+    Value:
+      Ref: PublicNetworkAcl
+  ElbFQDN:
+    Description: FQDN of ELB
+    Value:
+      Ref: ElasticLoadBalancer
+  InternetToElbSecurityGroup:
+    Description: Inernet To ELB Access Security Group.
+    Value:
+      Ref: InternetToElbSecurityGroup
+  InstanceToElbSecurityGroup:
+    Description: Instance To ELB Access Security Group.
+    Value:
+      Ref: InstanceToElbSecurityGroup
+  SetupElbLogging:
+    Description: Configure ELB S3 Bucket Logging Option.
+    Value:
+      Ref: SetupElbLogging
+  S3LoggingBucket:
+    Condition: ConfigureElbLogging
+    Description: Logging S3 Bucket.
+    Value:
+      Ref: S3LoggingBucket
+  AutoScalingGroup:
+    Description: Auto Scaling Group.
+    Value:
+      Ref: AutoScalingGroup
+  ElasticLoadBalancer:
+    Description: Elastic Load Balancer.
+    Value:
+      Ref: ElasticLoadBalancer
+  ElbHttpListeningPort:
+    Condition: DisableSslOrUseBothPorts
+    Description: Elastic Load Balancer HTTP Listening Port.
+    Value:
+      Ref: ElbHttpListeningPort
+  ElbHttpsListeningPort:
+    Condition: EnableSsl
+    Description: Elastic Load Balancer HTTPS Listening Port.
+    Value:
+      Ref: ElbHttpsListeningPort
+  ElbStickySessions:
+    Description: Enable ELB Stickiness Option.
+    Value:
+      Ref: ElbStickySessions
+  CookieExpirationPeriod:
+    Condition: ConfigureStickiness
+    Description: Cookie Expireation Period for ELB Stickiness Option.
+    Value:
+      Ref: CookieExpirationPeriod
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Ownership
+      Parameters:
+      - Owner
+      - Project
+      - DeleteAfter
+    - Label:
+        default: Auto Scale Group Configuration
+      Parameters:
+      - MinAutoScaleCount
+      - MaxAutoScaleCount
+      - AsgSnsTopicArn
+    - Label:
+        default: Instance Settings
+      Parameters:
+      - AMI
+      - OsType
+      - InstanceType
+      - Ec2KeyPair
+      - InstanceHttpListeningPort
+      - InternalAccessSecurityGroup
+      - RemoteSecurityGroup
+      - RDSAccessSecurityGroup
+    - Label:
+        default: Network Configuration
+      Parameters:
+      - VPC
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+      - PrivateSubnet1
+      - PrivateSubnet2
+      - PrivateSubnet3
+      - PublicNetworkAcl
+    - Label:
+        default: Load Balancer Configuration
+      Parameters:
+      - ElbHttpListeningPort
+      - UseSsl
+      - ElbHttpsListeningPort
+      - ListenOnBothPorts
+      - SetupElbLogging
+      - ElbStickySessions
+      - CookieExpirationPeriod
+    - Label:
+        default: Network ACL Rule Numbers
+      Parameters:
+      - AllowHttpToElbRuleNumber
+      - AllowHttpsToElbRuleNumber
+    ParameterLabels:
+      Owner:
+        default: Team or Individual Owner
+      DeleteAfter:
+        default: Delete After Date
+      Ec2KeyPair:
+        default: EC2 Keypair
+      InstanceType:
+        default: Instance Type
+      PublicSubnet1:
+        default: Public Subnet 1
+      PublicSubnet2:
+        default: Public Subnet 2
+      PublicSubnet3:
+        default: Public Subnet 3
+      PrivateSubnet1:
+        default: Private Subnet 1
+      PrivateSubnet2:
+        default: Private Subnet 2
+      PrivateSubnet3:
+        default: Private Subnet 3
+      PublicNetworkAcl:
+        default: Public Network ACL
+      InternalAccessSecurityGroup:
+        default: Instance-to-Instance SG
+      RemoteSecurityGroup:
+        default: Remote-to-Instance SG
+      RDSAccessSecurityGroup:
+        default: RDS-to-Instance SG
+      MinAutoScaleCount:
+        default: Minimum Count
+      MaxAutoScaleCount:
+        default: Maximum Count
+      ElbStickySessions:
+        default: Stickiness
+      AllowHttpToElbRuleNumber:
+        default: HTTP Internet to ELB
+      AllowHttpsToElbRuleNumber:
+        default: HTTPS Internet to ELB
+      InstanceHttpListeningPort:
+        default: Instance HTTP Port
+      ElbHttpListeningPort:
+        default: HTTP Port
+      ElbHttpsListeningPort:
+        default: HTTPS Port
+      UseSsl:
+        default: Use SSL
+      SetupElbLogging:
+        default: Setup Logging
+      CookieExpirationPeriod:
+        default: Cookie Expiration Period
+      ListenOnBothPorts:
+        default: Listen on HTTP & HTTPS
+      OsType:
+        default: OS Type

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appengine-web-app xmlns="http://appengine.google.com/ns/1.0">
+	<application>solid-justice-175012</application>
+	<module>default</module>
+	<version>1.0.0-SNAPSHOT</version>
+	<runtime>java8</runtime>
+	<threadsafe>true</threadsafe>
+	<system-properties>
+		<property name="java.util.logging.config.file" value="WEB-INF/logging.properties" />
+		<property name="JDBC_DATABASE_URL" value="jdbc:google:mysql://solid-justice-175012:us-east1:mysql-test/app?user=app&amp;password=app1234" />
+	</system-properties>
+</appengine-web-app>

@@ -1,0 +1,257 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create a Lambda Function and Api Gateway in 3 private subnets
+Parameters:
+
+  Project:
+    Description: Enter Project Name.
+    Type: String
+    Default: Autoscaling Baked AMI RDS Backed Webapp Stack Creation
+  VPC:
+    Description: Select VPC.
+    Type: AWS::EC2::VPC::Id
+  PublicSubnet1:
+    Description: Public Subnet 1 to Deploy ELB to.
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet2:
+    Description: Public Subnet 2 to Deploy ELB to.
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet3:
+    Description: Public Subnet 3 to Deploy ELB to.
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet1:
+    Description: Private Subnet 1 to Deploy Webapp Autoscaling Group to.
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2:
+    Description: Private Subnet 2 to Deploy Webapp Autoscaling Group to.
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet3:
+    Description: Private Subnet 3 to Deploy Webapp Autoscaling Group to.
+    Type: AWS::EC2::Subnet::Id
+  InternalAccessSecurityGroup:
+    Description: Security Group That Allows Bastion Host Access to Instances.
+    Type: AWS::EC2::SecurityGroup::Id
+  RDSAccessSecurityGroup:
+    Description: Security Group That Instance Access to RDS Instances.
+    Type: AWS::EC2::SecurityGroup::Id
+  PublicNetworkAcl:
+    Description: Enter Public Network ACL ID.
+    Type: String
+
+Resources:
+
+  IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+
+  IamPolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName:
+        Fn::Join:
+        - ''
+        - - Ref: AWS::StackName
+          - "-instance-policy"
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - ec2:Describe*
+          - ec2:CreateNetworkInterface
+          - ec2:DeleteNetworkInterface
+          - s3:*
+          - cloudwatch:*
+          - logs:*
+          - sns:*
+          - sqs:*
+          - xray:*
+          - elasticloadbalancing:Describe*
+          - autoscaling:Describe*
+          Resource: "*"
+      Roles:
+      - Ref: IamRole
+
+  TestApi: 
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Description: !Join [ "", [ !Ref "AWS::StackName", " API" ] ]
+      Name: !Join [ "", [ !Ref "AWS::StackName", " API" ] ]
+
+  TestResource: 
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: 
+        Ref: TestApi
+      ParentId:
+        Fn::GetAtt: 
+          - "TestApi"
+          - "RootResourceId"
+      PathPart: "test"
+
+  TestIdResource: 
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: 
+        Ref: TestApi
+      ParentId:
+        Ref: TestResource
+      PathPart: "{id}"
+
+  TestIdResourceANY:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TestApi
+      ResourceId: !Ref TestIdResource
+      HttpMethod: ANY      
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NodeLambdaFunction.Arn}/invocations
+
+  NodeLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: NodeLambdaFunction
+      Handler: "index.handler"
+      VpcConfig: 
+        SecurityGroupIds:
+        - Ref: RDSAccessSecurityGroup
+        - Ref: InternalAccessSecurityGroup
+        SubnetIds:
+        - Ref: PrivateSubnet1
+        - Ref: PrivateSubnet2
+        - Ref: PrivateSubnet3
+      Role: 
+        Fn::GetAtt: 
+          - "IamRole"
+          - "Arn"
+      Timeout: "30"
+      Runtime: "nodejs6.10"
+      Code: 
+        ZipFile: >
+          exports.handler = function (event, context, callback) {
+            callback(null, {
+              statusCode: 200,
+              body: JSON.stringify(event),
+            });
+          };
+      Environment:
+        Variables:
+          MYSQL_URL: "mysql://app:app*1234@serverless-rds.csyw6tydma0b.us-east-1.rds.amazonaws.com:3306/app?createDatabaseIfNotExist=true"
+          JDBC_DATABASE_URL: "jdbc:mysql://serverless-rds.csyw6tydma0b.us-east-1.rds.amazonaws.com:3306/app?createDatabaseIfNotExist=true"
+          JDBC_DATABASE_USERNAME: "app"
+          JDBC_DATABASE_PASSWORD: "app*1234"
+      TracingConfig:
+        Mode: "Active"
+
+  LambdaInvokePermission: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Fn::GetAtt: 
+          - "NodeLambdaFunction"
+          - "Arn"
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TestApi}/*
+
+Outputs:
+  Project:
+    Description: The project name.
+    Value:
+      Ref: Project
+  VPC:
+    Description: VPC Used.
+    Value:
+      Ref: VPC
+  PublicSubnets:
+    Description: Public Subnets ELB Deployed to.
+    Value:
+      Fn::Join:
+      - ''
+      - - 'AZ1: '
+        - Ref: PublicSubnet1
+        - ", "
+        - 'AZ2: '
+        - Ref: PublicSubnet2
+        - ", "
+        - 'AZ3: '
+        - Ref: PublicSubnet3
+  PrivateSubnets:
+    Description: Private Subnets Webapp ASG Deployed to.
+    Value:
+      Fn::Join:
+      - ''
+      - - 'AZ1: '
+        - Ref: PrivateSubnet1
+        - ", "
+        - 'AZ2: '
+        - Ref: PrivateSubnet2
+        - ", "
+        - 'AZ3: '
+        - Ref: PrivateSubnet3
+  PublicNetworkAcl:
+    Description: Public Network ACL Used.
+    Value:
+      Ref: PublicNetworkAcl
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Ownership
+      Parameters:
+      - Owner
+      - Project
+    - Label:
+        default: Network Configuration
+      Parameters:
+      - VPC
+      - PublicSubnet1
+      - PublicSubnet2
+      - PublicSubnet3
+      - PrivateSubnet1
+      - PrivateSubnet2
+      - PrivateSubnet3
+      - PublicNetworkAcl
+    - Label:
+        default: Network ACL Rule Numbers
+      Parameters:
+      - AllowHttpToElbRuleNumber
+      - AllowHttpsToElbRuleNumber
+    ParameterLabels:
+      Owner:
+        default: Team or Individual Owner
+      Ec2KeyPair:
+        default: EC2 Keypair
+      InstanceType:
+        default: Instance Type
+      PublicSubnet1:
+        default: Public Subnet 1
+      PublicSubnet2:
+        default: Public Subnet 2
+      PublicSubnet3:
+        default: Public Subnet 3
+      PrivateSubnet1:
+        default: Private Subnet 1
+      PrivateSubnet2:
+        default: Private Subnet 2
+      PrivateSubnet3:
+        default: Private Subnet 3
+      PublicNetworkAcl:
+        default: Public Network ACL
+      InternalAccessSecurityGroup:
+        default: Instance-to-Instance SG      
+      RDSAccessSecurityGroup:
+        default: RDS-to-Instance SG
+      OsType:
+        default: OS Type

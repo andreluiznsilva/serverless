@@ -1,0 +1,22 @@
+debug: false
+info:
+  build:
+    artifact: '@project.artifactId@'
+    name: '@project.name@'
+    description: '@project.description@'
+    version: '@project.version@'
+server:
+  port: 8080
+logging:
+  level:
+    org.springframework: INFO
+spring:
+  application:
+    name: '@project.artifactId@'
+    version: '@project.version@'
+  datasource:
+    url: ${JDBC_DATABASE_URL:jdbc:mysql://localhost:3306/app}
+    username: ${JDBC_DATABASE_USERNAME:app}
+    password: ${JDBC_DATABASE_PASSWORD:app1234}
+  jackson:
+    default-property-inclusion: non_null

@@ -1,0 +1,25 @@
+version: '3'
+services:
+
+  app:
+    image: localhost:5000/app
+    build: .
+    environment:
+      - MYSQL_URL=mysql://app:app1234@db/app?createDatabaseIfNotExist=true&autoReconnect=true&connectTimeout=10000
+    ports:
+      - 3000:3000
+    restart: on-failure
+    deploy:
+      mode: replicated
+      replicas: 3
+
+  db:
+    image: mysql:5.6
+    ports:
+      - 3306:3306
+    environment:
+      - MYSQL_DATABASE=app
+      - MYSQL_ROOT_PASSWORD=root1234
+      - MYSQL_USER=app
+      - MYSQL_PASSWORD=app1234
+    restart: on-failure

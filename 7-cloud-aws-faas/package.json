@@ -1,0 +1,13 @@
+{
+  "name": "nodejs-aws-lambda",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index",
+    "debug": "node --debug index"
+  },
+  "dependencies": {
+    "mysql": "^2.13.0"
+  }
+}

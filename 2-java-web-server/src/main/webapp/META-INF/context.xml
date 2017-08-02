@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Context reloadable="false" unloadDelay="5000" path="/app">
+
+	<Resource name="jdbc/app" auth="Container" type="javax.sql.DataSource" maxActive="20" maxIdle="5" maxWait="10000"
+		username="app" password="app*1234" driverClassName="com.mysql.jdbc.Driver" url="jdbc:mysql://db:3306/app?createDatabaseIfNotExist=true&amp;autoReconnect=true&amp;connectTimeout=10000" />
+
+</Context>
