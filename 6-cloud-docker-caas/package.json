@@ -7,10 +7,10 @@
     "debug": "node --debug app"
   },
   "dependencies": {
-    "body-parser": "~1.17.1",
+    "body-parser": "~1.20.2",
     "cookie-parser": "~1.4.3",
     "debug": "~2.6.3",
-    "express": "~4.15.2",
+    "express": "~4.19.2",
     "morgan": "~1.10.0",
     "mysql": "^2.13.0"
   }
